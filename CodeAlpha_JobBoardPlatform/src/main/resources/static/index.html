@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job Board - CodeAlpha</title>
+<style>
+  :root{--bg:#f5f6fa;--card:#fff;--text:#1f2430;--muted:#6b7280;--accent:#2563eb;--danger:#dc2626;--border:#e5e7eb}
+  @media (prefers-color-scheme:dark){:root{--bg:#12141a;--card:#1b1e27;--text:#e8eaf0;--muted:#9aa1b2;--accent:#60a5fa;--border:#2a2e3a}}
+  body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--text)}
+  header{display:flex;justify-content:space-between;align-items:center;padding:14px 24px;border-bottom:1px solid var(--border);background:var(--card);flex-wrap:wrap;gap:8px}
+  main{max-width:1000px;margin:0 auto;padding:20px 16px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px}
+  input,textarea,select{box-sizing:border-box;padding:9px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);margin:4px 0 8px;font:inherit;width:100%}
+  button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font:inherit}
+  button.sec{background:transparent;color:var(--text);border:1px solid var(--border)}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center} .row>*{flex:1;min-width:130px} .row>button{flex:0 0 auto}
+  .muted{color:var(--muted);font-size:14px} .err{color:var(--danger)} .hidden{display:none}
+  .tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap} .tabs button.active{background:var(--accent);color:#fff}
+  .tag{display:inline-block;background:var(--border);border-radius:6px;padding:2px 8px;font-size:12px;margin-right:6px}
+  .wrap{overflow-x:auto}
+</style>
+</head>
+<body>
+<header><strong>Job Board</strong>
+  <span><span id="who" class="muted"></span> <button class="sec hidden" id="logoutBtn" onclick="logout()">Logout</button></span></header>
+<main>
+<p id="msg" class="muted"></p>
+<div class="tabs" id="tabs"></div>
+
+<section id="jobsView">
+  <div class="card"><div class="row">
+    <input id="kw" placeholder="Keyword"><input id="loc" placeholder="Location">
+    <select id="type"><option value="">Any type</option><option>FULL_TIME</option><option>PART_TIME</option><option>INTERNSHIP</option><option>CONTRACT</option></select>
+    <input id="min" type="number" placeholder="Min salary"><button onclick="loadJobs()">Search</button></div></div>
+  <div id="jobs"></div>
+</section>
+
+<section id="loginView" class="hidden card">
+  <div class="tabs"><button class="sec" onclick="authMode('login')">Login</button><button class="sec" onclick="authMode('signup')">Sign up</button></div>
+  <div id="signup" class="hidden">
+    <input id="name" placeholder="Full name"><select id="role"><option value="CANDIDATE">Candidate</option><option value="EMPLOYER">Employer</option></select>
+    <input id="company" placeholder="Company name (employers)"></div>
+  <input id="email" placeholder="Email" value="candidate@jobs.com"><input id="password" type="password" placeholder="Password" value="candidate123">
+  <button id="authBtn" onclick="submitAuth()">Login</button>
+  <p class="muted">Demo: candidate@jobs.com / candidate123 · employer@jobs.com / employer123 · admin@jobs.com / admin123</p>
+</section>
+
+<section id="candidateView" class="hidden">
+  <div class="card"><h3>My resume</h3><p id="resumeInfo" class="muted"></p>
+    <input type="file" id="resumeFile" accept=".pdf,.doc,.docx"><button onclick="uploadResume()">Upload</button></div>
+  <h3>My applications</h3><div id="myApps"></div>
+</section>
+
+<section id="employerView" class="hidden">
+  <div class="card"><h3>Post a job</h3>
+    <div class="row"><input id="jt" placeholder="Title"><input id="jl" placeholder="Location"></div>
+    <div class="row"><select id="jty"><option>FULL_TIME</option><option>PART_TIME</option><option>INTERNSHIP</option><option>CONTRACT</option></select>
+      <input id="js" type="number" placeholder="Annual salary (0 = hidden)"></div>
+    <textarea id="jd" placeholder="Description" rows="3"></textarea><button onclick="postJob()">Post job</button></div>
+  <h3>My jobs</h3><div id="myJobs"></div>
+  <div id="appsBox" class="card hidden"><h3 id="appsTitle"></h3><div class="wrap"><div id="apps"></div></div></div>
+</section>
+
+<section id="notifView" class="hidden"><h3>Notifications</h3><div id="notifs"></div></section>
+
+<section id="adminView" class="hidden"><div class="card"><h3>Statistics</h3><pre id="stats"></pre></div>
+  <div class="card"><h3>Users</h3><div id="userList" class="wrap"></div></div></section>
+</main>
+<script>
+let auth=null, me=null, view='jobs', mode='login';
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(path,method='GET',body){
+  const h={}; if(auth)h.Authorization=auth; let b;
+  if(body instanceof FormData){b=body;}else if(body){h['Content-Type']='application/json';b=JSON.stringify(body);}
+  const r=await fetch(path,{method,headers:h,body:b});
+  if(r.status===204)return null;
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(d.error||('Error '+r.status));
+  return d;
+}
+const say=(t,err)=>{$('msg').textContent=t||'';$('msg').className=err?'err':'muted';};
+const money=n=>n>0?'₹'+Number(n).toLocaleString('en-IN')+'/yr':'Salary not disclosed';
+
+function tabs(){
+  const t=[['jobs','Jobs']];
+  if(!me)t.push(['login','Login / Sign up']);
+  else{
+    if(me.role==='CANDIDATE')t.push(['candidate','My applications']);
+    if(me.role==='EMPLOYER')t.push(['employer','Employer dashboard']);
+    if(me.role==='ADMIN')t.push(['admin','Admin']);
+    t.push(['notif','Notifications']);
+  }
+  $('tabs').innerHTML=t.map(([k,l])=>`<button class="${k===view?'active':'sec'}" onclick="show('${k}')">${l}</button>`).join('');
+  ['jobs','login','candidate','employer','notif','admin'].forEach(k=>$(k+'View').classList.toggle('hidden',k!==view));
+  $('who').textContent=me?`${me.name} (${me.role})`:'';$('logoutBtn').classList.toggle('hidden',!me);
+}
+function show(v){view=v;say('');tabs();
+  if(v==='jobs')loadJobs();if(v==='candidate')loadCandidate();if(v==='employer')loadEmployer();
+  if(v==='notif')loadNotifs();if(v==='admin')loadAdmin();}
+
+function authMode(m){mode=m;$('signup').classList.toggle('hidden',m!=='signup');$('authBtn').textContent=m==='signup'?'Create account':'Login';}
+async function submitAuth(){
+  try{const email=$('email').value.trim(),password=$('password').value;
+    if(mode==='signup'){await api('/api/auth/register','POST',{name:$('name').value,email,password,role:$('role').value,companyName:$('company').value});say('Account created. Please log in.');authMode('login');return;}
+    auth='Basic '+btoa(unescape(encodeURIComponent(email+':'+password)));
+    me=await api('/api/auth/me');sessionStorage.setItem('auth',auth);
+    show(me.role==='EMPLOYER'?'employer':me.role==='ADMIN'?'admin':'jobs');
+  }catch(e){auth=null;me=null;say(e.message,true);}
+}
+function logout(){sessionStorage.removeItem('auth');auth=null;me=null;view='jobs';tabs();loadJobs();}
+
+async function loadJobs(){
+  const q=new URLSearchParams({keyword:$('kw').value,location:$('loc').value,type:$('type').value,minSalary:$('min').value||0});
+  const list=await api('/api/jobs?'+q);
+  $('jobs').innerHTML=list.map(j=>`<div class="card"><strong>${esc(j.title)}</strong> <span class="muted">at ${esc(j.company)}</span>
+    <div><span class="tag">${esc(j.jobType)}</span><span class="tag">${esc(j.location)}</span><span class="tag">${money(j.salary)}</span></div>
+    <p>${esc(j.description)}</p>
+    ${me&&me.role==='CANDIDATE'?`<button onclick="apply(${j.id})">Apply</button>`:''}</div>`).join('')||'<p class="muted">No jobs match your filters.</p>';
+}
+async function apply(id){
+  const cover=prompt('Short cover letter (optional):')??'';
+  try{await api('/api/jobs/'+id+'/apply','POST',{coverLetter:cover});say('Application submitted!');}catch(e){say(e.message,true);}
+}
+async function loadCandidate(){
+  $('resumeInfo').textContent=me.resumeName?('Current resume: '+me.resumeName):'No resume uploaded yet (required to apply).';
+  const list=await api('/api/applications/my');
+  $('myApps').innerHTML=list.map(a=>`<div class="card"><strong>${esc(a.jobTitle)}</strong> <span class="muted">at ${esc(a.company)}</span>
+    <div><span class="tag">${esc(a.status.replace('_',' '))}</span><span class="muted">applied ${new Date(a.appliedAt).toLocaleDateString()}</span></div></div>`).join('')||'<p class="muted">No applications yet.</p>';
+}
+async function uploadResume(){
+  const f=$('resumeFile').files[0];if(!f){say('Choose a file first',true);return;}
+  const fd=new FormData();fd.append('file',f);
+  try{me=await api('/api/resume','POST',fd);say('Resume uploaded.');loadCandidate();}catch(e){say(e.message,true);}
+}
+async function loadEmployer(){
+  const list=await api('/api/employer/jobs');
+  $('myJobs').innerHTML=list.map(j=>`<div class="card"><strong>${esc(j.title)}</strong> <span class="tag">${j.active?'OPEN':'CLOSED'}</span>
+    <span class="muted">${j.applicants} applicant(s)</span>
+    <div class="row" style="margin-top:8px"><button class="sec" onclick="applicants(${j.id},'${esc(j.title).replace(/'/g,'')}')">View applicants</button>
+    ${j.active?`<button class="sec" onclick="closeJob(${j.id})">Close job</button>`:''}</div></div>`).join('')||'<p class="muted">You have not posted any jobs.</p>';
+}
+async function postJob(){
+  try{await api('/api/jobs','POST',{title:$('jt').value,location:$('jl').value,jobType:$('jty').value,salary:parseInt($('js').value||'0'),description:$('jd').value});
+    say('Job posted.');loadEmployer();}catch(e){say(e.message,true);}
+}
+async function closeJob(id){try{await api('/api/jobs/'+id,'DELETE');loadEmployer();}catch(e){say(e.message,true);}}
+async function applicants(id,title){
+  try{const list=await api('/api/jobs/'+id+'/applications');
+    $('appsTitle').textContent='Applicants - '+title;$('appsBox').classList.remove('hidden');
+    $('apps').innerHTML='<table style="width:100%;font-size:14px"><tr><th>Name</th><th>Email</th><th>Resume</th><th>Status</th></tr>'+list.map(a=>`<tr><td>${esc(a.candidateName)}</td><td>${esc(a.candidateEmail)}</td>
+      <td><a href="#" onclick="dlResume(${a.id},'${esc(a.resumeName||'resume').replace(/'/g,'')}');return false">${esc(a.resumeName||'resume')}</a></td>
+      <td><select onchange="setStatus(${a.id},this.value,${id},'${esc(title).replace(/'/g,'')}')" style="margin:0">${['APPLIED','UNDER_REVIEW','SHORTLISTED','REJECTED','HIRED'].map(s=>`<option ${s===a.status?'selected':''}>${s}</option>`).join('')}</select></td></tr>`).join('')+'</table>';
+  }catch(e){say(e.message,true);}
+}
+async function setStatus(appId,status,jobId,title){try{await api('/api/applications/'+appId+'/status','PATCH',{status});say('Status updated; candidate notified.');}catch(e){say(e.message,true);}}
+async function dlResume(id,name){
+  const r=await fetch('/api/applications/'+id+'/resume',{headers:{Authorization:auth}});
+  if(!r.ok){say('Could not download resume',true);return;}
+  const url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);
+}
+async function loadNotifs(){
+  const list=await api('/api/notifications');
+  $('notifs').innerHTML=list.map(n=>`<div class="card" style="${n.seen?'opacity:.6':''}">${esc(n.message)}
+    <div class="muted">${new Date(n.createdAt).toLocaleString()} ${n.seen?'':`<button class="sec" onclick="readNotif(${n.id})">Mark read</button>`}</div></div>`).join('')||'<p class="muted">No notifications.</p>';
+}
+async function readNotif(id){await api('/api/notifications/'+id+'/read','POST');loadNotifs();}
+async function loadAdmin(){
+  $('stats').textContent=JSON.stringify(await api('/api/admin/stats'),null,2);
+  const us=await api('/api/admin/users');
+  $('userList').innerHTML='<table style="width:100%;font-size:14px"><tr><th>ID</th><th>Name</th><th>Email</th><th>Role</th></tr>'+us.map(u=>`<tr><td>${u.id}</td><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.role}</td></tr>`).join('')+'</table>';
+}
+(async()=>{const s=sessionStorage.getItem('auth');if(s){auth=s;try{me=await api('/api/auth/me');}catch(e){auth=null;me=null;}}tabs();loadJobs();})();
+</script>
+</body></html>

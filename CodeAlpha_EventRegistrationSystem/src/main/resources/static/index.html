@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Event Registration - CodeAlpha</title>
+<style>
+  :root{--bg:#f5f6fa;--card:#fff;--text:#1f2430;--muted:#6b7280;--accent:#0d9488;--danger:#dc2626;--border:#e5e7eb}
+  @media (prefers-color-scheme:dark){:root{--bg:#12141a;--card:#1b1e27;--text:#e8eaf0;--muted:#9aa1b2;--accent:#2dd4bf;--border:#2a2e3a}}
+  body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--text)}
+  header{display:flex;justify-content:space-between;align-items:center;padding:14px 24px;border-bottom:1px solid var(--border);background:var(--card)}
+  main{max-width:960px;margin:0 auto;padding:24px 16px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px}
+  input,textarea,select{width:100%;box-sizing:border-box;padding:9px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);margin:4px 0 10px;font:inherit}
+  button{background:var(--accent);color:#000;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font:inherit}
+  button.sec{background:transparent;color:var(--text);border:1px solid var(--border)} button.del{background:var(--danger);color:#fff}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+  .muted{color:var(--muted);font-size:14px} .err{color:var(--danger)} .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .tabs button{margin-right:6px} .hidden{display:none}
+  table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:6px;border-bottom:1px solid var(--border);text-align:left}
+</style>
+</head>
+<body>
+<header><strong>Event Registration</strong><span id="who" class="muted"></span></header>
+<main>
+  <p id="msg"></p>
+
+  <section id="authBox" class="card">
+    <div class="tabs"><button class="sec" onclick="showAuth('login')">Login</button><button class="sec" onclick="showAuth('signup')">Sign up</button></div>
+    <div id="signupFields" class="hidden"><label>Name</label><input id="name">
+      <label>Account type</label><select id="role"><option value="ATTENDEE">Attendee</option><option value="ORGANIZER">Organizer</option></select></div>
+    <label>Email</label><input id="email" value="admin@event.com">
+    <label>Password</label><input id="password" type="password" value="admin123">
+    <button id="authBtn" onclick="submitAuth()">Login</button>
+    <p class="muted">Demo organizer: admin@event.com / admin123</p>
+  </section>
+
+  <section id="app" class="hidden">
+    <div class="row"><button class="sec" onclick="logout()">Logout</button>
+      <input id="search" placeholder="Search events by title or location" oninput="loadEvents()" style="max-width:320px;margin:0"></div>
+    <div id="organizer" class="card hidden"><h3>Create event (organizer)</h3>
+      <input id="t" placeholder="Title"><textarea id="d" placeholder="Description"></textarea>
+      <input id="l" placeholder="Location"><input id="dt" type="datetime-local"><input id="cap" type="number" min="1" placeholder="Capacity">
+      <button onclick="createEvent()">Create</button></div>
+    <h3>Events</h3><div id="events" class="grid"></div>
+    <h3>My registrations</h3><div id="mine" class="grid"></div>
+    <div id="attendeesBox" class="card hidden"><h3 id="attTitle"></h3><table id="attTable"></table></div>
+  </section>
+</main>
+<script>
+let auth=null, me=null, mode='login';
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(path,method='GET',body){
+  const h={'Content-Type':'application/json'}; if(auth)h.Authorization=auth;
+  const r=await fetch(path,{method,headers:h,body:body?JSON.stringify(body):undefined});
+  if(r.status===204)return null;
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(d.error||('Error '+r.status));
+  return d;
+}
+function say(t,err){const m=$('msg');m.textContent=t||'';m.className=err?'err':'muted';}
+function showAuth(m){mode=m;$('signupFields').classList.toggle('hidden',m!=='signup');$('authBtn').textContent=m==='signup'?'Create account':'Login';}
+async function submitAuth(){
+  try{
+    const email=$('email').value.trim(),password=$('password').value;
+    if(mode==='signup'){await api('/api/auth/register','POST',{name:$('name').value,email,password,role:$('role').value});say('Account created. You can log in now.');showAuth('login');return;}
+    auth='Basic '+btoa(unescape(encodeURIComponent(email+':'+password)));
+    me=await api('/api/auth/me'); sessionStorage.setItem('auth',auth); enter();
+  }catch(e){auth=null;say(e.message,true);}
+}
+function enter(){
+  $('authBox').classList.add('hidden');$('app').classList.remove('hidden');
+  $('who').textContent=me.name+' ('+me.role+')';$('organizer').classList.toggle('hidden',me.role!=='ORGANIZER');
+  say('');loadEvents();loadMine();
+}
+function logout(){auth=null;me=null;sessionStorage.removeItem('auth');location.reload();}
+async function loadEvents(){
+  const list=await api('/api/events?q='+encodeURIComponent($('search').value||''));
+  $('events').innerHTML=list.map(e=>`<div class="card"><strong>${esc(e.title)}</strong>
+    <div class="muted">${esc(e.location)} · ${new Date(e.eventDate).toLocaleString()}</div>
+    <p>${esc(e.description)}</p><div class="muted">${e.registered}/${e.capacity} registered (${e.seatsLeft} left) · by ${esc(e.organizerName)}</div>
+    <div class="row"><button onclick="reg(${e.id})" ${e.seatsLeft===0?'disabled':''}>${e.seatsLeft===0?'Full':'Register'}</button>
+    ${me.role==='ORGANIZER'&&me.id===e.organizerId?`<button class="sec" onclick="attendees(${e.id},'${esc(e.title).replace(/'/g,'')}')">Attendees</button><button class="del" onclick="delEvent(${e.id})">Delete</button>`:''}</div></div>`).join('')||'<p class="muted">No events found.</p>';
+}
+async function loadMine(){
+  const list=await api('/api/registrations/my');
+  $('mine').innerHTML=list.map(r=>`<div class="card"><strong>${esc(r.eventTitle)}</strong>
+    <div class="muted">${esc(r.location)} · ${new Date(r.eventDate).toLocaleString()}</div>
+    <div class="row"><button class="del" onclick="cancelReg(${r.id})">Cancel registration</button></div></div>`).join('')||'<p class="muted">You have no registrations.</p>';
+}
+async function reg(id){try{await api('/api/events/'+id+'/register','POST');say('Registered!');loadEvents();loadMine();}catch(e){say(e.message,true);}}
+async function cancelReg(id){try{await api('/api/registrations/'+id,'DELETE');say('Registration cancelled.');loadEvents();loadMine();}catch(e){say(e.message,true);}}
+async function createEvent(){
+  try{await api('/api/events','POST',{title:$('t').value,description:$('d').value,location:$('l').value,eventDate:$('dt').value,capacity:parseInt($('cap').value||'0')});
+    say('Event created.');loadEvents();}catch(e){say(e.message,true);}
+}
+async function delEvent(id){if(!confirm('Delete this event and its registrations?'))return;try{await api('/api/events/'+id,'DELETE');loadEvents();loadMine();}catch(e){say(e.message,true);}}
+async function attendees(id,title){
+  try{const list=await api('/api/events/'+id+'/registrations');
+    $('attTitle').textContent='Attendees - '+title;$('attendeesBox').classList.remove('hidden');
+    $('attTable').innerHTML='<tr><th>Name</th><th>Email</th><th>Registered</th></tr>'+list.map(a=>`<tr><td>${esc(a.name)}</td><td>${esc(a.email)}</td><td>${new Date(a.registeredAt).toLocaleString()}</td></tr>`).join('');
+  }catch(e){say(e.message,true);}
+}
+(async()=>{const saved=sessionStorage.getItem('auth');if(saved){auth=saved;try{me=await api('/api/auth/me');enter();}catch(e){auth=null;}}})();
+</script>
+</body></html>
